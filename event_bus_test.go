@@ -1,8 +1,12 @@
 package EventBus
 
 import (
+	"fmt"
+	"reflect"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNew(t *testing.T) {
@@ -153,4 +157,97 @@ func TestSubscribeAsync(t *testing.T) {
 	if numResults != 2 {
 		t.Fail()
 	}
+}
+
+func TestPublishHandler(t *testing.T) {
+	results := make(chan int)
+
+	publishHandler := &testPublishHandler{}
+
+	bus := NewWithPublishHandler(publishHandler)
+	bus.SubscribeAsync("topic", func(a int, out chan<- int) {
+		out <- a
+	}, false)
+
+	bus.Publish("topic", 1, results)
+	bus.Publish("topic", 2, results)
+
+	numResults := 0
+
+	go func() {
+		for _ = range results {
+			numResults++
+		}
+	}()
+
+	bus.WaitAsync()
+
+	time.Sleep(10 * time.Millisecond)
+
+	if numResults != 2 {
+		t.Fail()
+	}
+
+	assert.Equal(t, 2, publishHandler.NumPreEvents)
+	assert.Equal(t, 2, publishHandler.NumEvents)
+	assert.Equal(t, 0, publishHandler.Panics)
+}
+
+func TestPublishHandlerRecover(t *testing.T) {
+	results := make(chan int)
+
+	publishHandler := &testPublishHandler{}
+
+	bus := NewWithPublishHandler(publishHandler)
+	bus.SubscribeAsync("topic", func(a int, out chan<- int) {
+		out <- a
+	}, false)
+
+	bus.Publish("topic", 1, results)
+	bus.Publish("topic", 2, results)
+	bus.Publish("topic", 3, nil)
+	bus.Publish("topic", 4, 5, 6, results)
+	bus.Publish("topic", 5)
+
+	numResults := 0
+
+	go func() {
+		for _ = range results {
+			numResults++
+		}
+	}()
+
+	bus.WaitAsync()
+
+	time.Sleep(10 * time.Millisecond)
+
+	if numResults != 2 {
+		t.Fail()
+	}
+
+	assert.Equal(t, 5, publishHandler.NumPreEvents)
+	assert.Equal(t, 5, publishHandler.NumEvents)
+	assert.Equal(t, 3, publishHandler.Panics)
+}
+
+type testPublishHandler struct {
+	NumPreEvents int
+	NumEvents    int
+	Panics       int
+}
+
+func (tph *testPublishHandler) PrePublish(topic string, args ...interface{}) {
+	tph.NumPreEvents++
+}
+
+func (tph *testPublishHandler) Publish(topic string, args []interface{}, callback reflect.Value, callArgs []reflect.Value) {
+	defer func() {
+		if r := recover(); r != nil {
+			tph.Panics++
+			fmt.Printf("Recovered from panic for EventBus publish: event=%s, with args=%v, error: %s\n", topic, args, r)
+		}
+	}()
+
+	tph.NumEvents++
+	callback.Call(callArgs)
 }
