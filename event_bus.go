@@ -42,9 +42,18 @@ type PublishHandler interface {
 	// Publish is called to publish the event with arguments already prepared
 	// for reflection
 	//
+	//	Params
+	//		topic    - The topic being published
+	//		args     - The original args for the publish
+	//		callback - The callback/listener for the event topic
+	//		callArgs - The original arguments to the callback in reflect.Value form
+	//
 	//	Notes
 	//		The core implementation for publishing the event looks like:
-	//			callback.Call(args)
+	//			callback.Call(callArgs)
+	//
+	//		The topic and original argument form are provided for logging or other
+	//		use as the PublishHandler sees fit
 	//
 	Publish(topic string, args []interface{}, callback reflect.Value, callArgs []reflect.Value)
 }
