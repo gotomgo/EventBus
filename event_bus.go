@@ -33,11 +33,28 @@ type Bus interface {
 	BusPublisher
 }
 
+// PublishHandler allows external code to be more directly involved in
+// publishing an event
+type PublishHandler interface {
+	// PrePublish is called prior to the event being published
+	PrePublish(topic string, args ...interface{})
+
+	// Publish is called to publish the event with arguments already prepared
+	// for reflection
+	//
+	//	Notes
+	//		The core implementation for publishing the event looks like:
+	//			callback.Call(args)
+	//
+	Publish(topic string, args []interface{}, callback reflect.Value, callArgs []reflect.Value)
+}
+
 // EventBus - box for handlers and callbacks.
 type EventBus struct {
-	handlers map[string][]*eventHandler
-	lock     sync.Mutex // a lock for the map
-	wg       sync.WaitGroup
+	handlers       map[string][]*eventHandler
+	lock           sync.Mutex // a lock for the map
+	wg             sync.WaitGroup
+	publishHandler PublishHandler
 }
 
 type eventHandler struct {
@@ -45,7 +62,15 @@ type eventHandler struct {
 	flagOnce      bool
 	async         bool
 	transactional bool
-	sync.Mutex // lock for an event handler - useful for running async callbacks serially
+	sync.Mutex    // lock for an event handler - useful for running async callbacks serially
+}
+
+type defaultPublishHandler struct{}
+
+func (dph *defaultPublishHandler) PrePublish(topic string, args ...interface{}) {}
+
+func (dph *defaultPublishHandler) Publish(topic string, args []interface{}, callback reflect.Value, callArgs []reflect.Value) {
+	callback.Call(callArgs)
 }
 
 // New returns new EventBus with empty handlers.
@@ -54,6 +79,18 @@ func New() Bus {
 		make(map[string][]*eventHandler),
 		sync.Mutex{},
 		sync.WaitGroup{},
+		&defaultPublishHandler{},
+	}
+	return Bus(b)
+}
+
+// NewWithPublishHandler creates an event bus with a PublishHandler
+func NewWithPublishHandler(publishHandler PublishHandler) Bus {
+	b := &EventBus{
+		make(map[string][]*eventHandler),
+		sync.Mutex{},
+		sync.WaitGroup{},
+		publishHandler,
 	}
 	return Bus(b)
 }
@@ -154,8 +191,10 @@ func (bus *EventBus) Publish(topic string, args ...interface{}) {
 }
 
 func (bus *EventBus) doPublish(handler *eventHandler, topic string, args ...interface{}) {
+	bus.publishHandler.PrePublish(topic, args...)
+
 	passedArguments := bus.setUpPublish(topic, args...)
-	handler.callBack.Call(passedArguments)
+	bus.publishHandler.Publish(topic, args, handler.callBack, passedArguments)
 }
 
 func (bus *EventBus) doPublishAsync(handler *eventHandler, topic string, args ...interface{}) {
