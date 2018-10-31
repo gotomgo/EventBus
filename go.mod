@@ -1,1 +1,1 @@
-module bitbucket.org/overtonestudios/EventBus
+module github.com/gotomgo/EventBus
